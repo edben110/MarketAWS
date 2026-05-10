@@ -1,0 +1,3 @@
+{
+  "FilterPolicy": "{\"eventType\":[\"order.created\"]}"
+}

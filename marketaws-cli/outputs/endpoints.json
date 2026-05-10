@@ -1,0 +1,38 @@
+{
+  "api": {
+    "ordersUrl": "https://9zfyxw0098.execute-api.us-east-1.amazonaws.com/prod/orders",
+    "restApiId": "9zfyxw0098"
+  },
+  "ec2": {
+    "instanceIds": [
+      "i-0bb3bb4d3fb9afc37",
+      "i-0dc377e9a2151a3b6"
+    ],
+    "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:469134084749:targetgroup/marketaws-nginx-tg/7a6cb93a5cfb49f0",
+    "loadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:469134084749:loadbalancer/app/marketaws-marketplace-alb/eb4a2e7f23d375cc",
+    "loadBalancerDns": "marketaws-marketplace-alb-720597790.us-east-1.elb.amazonaws.com"
+  },
+  "frontend": {
+    "albUrl": "http://marketaws-marketplace-alb-720597790.us-east-1.elb.amazonaws.com"
+  },
+  "region": "us-east-1",
+  "sns": {
+    "marketplaceTopicArn": "arn:aws:sns:us-east-1:469134084749:marketaws-marketplace-events",
+    "adminTopicArn": "arn:aws:sns:us-east-1:469134084749:marketaws-admin-alerts"
+  },
+  "lambda": {
+    "createOrderArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-create-order-lambda",
+    "processOrderArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-process-order-lambda",
+    "inventoryArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-inventory-lambda",
+    "dlqArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-dlq-handler-lambda",
+    "imageArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-image-validator-lambda"
+  },
+  "accountId": "469134084749",
+  "s3": {
+    "productImagesBucket": "marketaws-product-images-469134084749-us-east-1"
+  },
+  "sqs": {
+    "orderQueueUrl": "https://sqs.us-east-1.amazonaws.com/469134084749/marketaws-order-queue",
+    "orderDlqUrl": "https://sqs.us-east-1.amazonaws.com/469134084749/marketaws-order-dlq"
+  }
+}

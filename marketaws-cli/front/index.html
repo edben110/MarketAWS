@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarketAWS - Checkout</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background-effects">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+    
+    <div class="container">
+        <header>
+            <h1>Market<span>AWS</span></h1>
+            <div id="server-badge" class="server-badge">Conectando...</div>
+        </header>
+
+        <main class="glass-panel">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="marketplace">Marketplace</button>
+                <button class="tab-btn" data-tab="order">Order Form</button>
+                <button class="tab-btn" data-tab="seller">Seller Panel</button>
+                <button class="tab-btn" data-tab="system">System Status</button>
+            </div>
+
+            <!-- Tab: Marketplace (NUEVO) -->
+            <div id="marketplace-tab" class="tab-content active">
+                <h2>Productos Destacados</h2>
+                <div class="product-grid" id="product-grid">
+                    <!-- Los productos se cargarán aquí dinámicamente -->
+                </div>
+            </div>
+
+            <!-- Tab: Order Form -->
+            <div id="order-tab" class="tab-content">
+                <h2>Crear Nueva Orden</h2>
+                <p class="subtitle">Prueba la arquitectura Serverless</p>
+                
+                <form id="order-form">
+                    <div class="form-group">
+                        <label for="buyerId">ID del Comprador</label>
+                        <input type="text" id="buyerId" required value="user_001">
+                    </div>
+                    <div class="form-group">
+                        <label for="sellerId">ID del Vendedor</label>
+                        <input type="text" id="sellerId" required value="seller_001">
+                    </div>
+                    <div class="form-group">
+                        <label for="productId">ID del Producto</label>
+                        <input type="number" id="productId" required value="1">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="quantity">Cantidad</label>
+                            <input type="number" id="quantity" required value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="amount">Monto Total ($)</label>
+                            <input type="number" id="amount" required value="999.99" step="0.01">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="forceError">
+                        <label for="forceError">Forzar Error (Probar DLQ)</label>
+                    </div>
+
+                    <button type="submit" id="submit-btn" class="primary-btn">
+                        <span class="btn-text">Enviar Orden</span>
+                        <div class="spinner hidden"></div>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Tab: Seller Panel -->
+            <div id="seller-tab" class="tab-content">
+                <h2>Panel del Vendedor</h2>
+                <p class="subtitle">Publicar Producto con Validación Rekognition</p>
+                
+                <div class="form-group">
+                    <label for="product-name">Nombre del Producto</label>
+                    <input type="text" id="product-name" placeholder="Ej. Camara Pro 4K">
+                </div>
+                <div class="form-group">
+                    <label for="product-price">Precio ($)</label>
+                    <input type="number" id="product-price" placeholder="99.99" step="0.01">
+                </div>
+
+                <div class="form-group">
+                    <label>Imagen del Producto (S3 + Rekognition)</label>
+                    <div class="upload-area" id="upload-area">
+                        <input type="file" id="image-input" accept="image/jpeg,image/png" hidden>
+                        <div class="upload-placeholder">
+                            <span class="icon">📷</span>
+                            <span>Haz clic para subir imagen</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="upload-status" class="upload-status hidden">
+                    <div class="progress-bar"><div class="fill"></div></div>
+                    <span class="status-text">Procesando...</span>
+                </div>
+            </div>
+
+            <!-- Tab: System Status -->
+            <div id="system-tab" class="tab-content">
+                <h2>Estado de Infraestructura</h2>
+                <p class="subtitle">Verifica ALB y Nginx Proxy</p>
+                
+                <div class="action-buttons">
+                    <button id="check-health" class="secondary-btn">Check Health (/health)</button>
+                    <button id="check-version" class="secondary-btn">Check Backend (/api/)</button>
+                </div>
+
+                <div class="info-card">
+                    <p><strong>Host Actual:</strong> <span id="alb-dns-text">Loading...</span></p>
+                </div>
+            </div>
+
+            <div id="response-box" class="response-box hidden">
+                <h3>Respuesta del Servidor</h3>
+                <pre id="response-content"></pre>
+            </div>
+        </main>
+    </div>
+
+    <!-- Archivos JS -->
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

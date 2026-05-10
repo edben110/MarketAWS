@@ -1,0 +1,9 @@
+{
+  "name": "marketaws-mysql2-layer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mysql2 dependency layer for MarketAWS",
+  "dependencies": {
+    "mysql2": "^3.11.0"
+  }
+}

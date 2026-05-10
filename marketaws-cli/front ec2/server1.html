@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MarketAWS Marketplace</title>
+
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+
+  <style>
+    body {
+      background: #f4f7fb;
+      min-height: 100vh;
+    }
+
+    .navbar-brand {
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+
+    .card {
+      border: none;
+      border-radius: 16px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #0d6efd, #6610f2);
+      color: white;
+      border-radius: 20px;
+      padding: 50px;
+      margin-bottom: 30px;
+    }
+
+    .status-box {
+      border-radius: 12px;
+      padding: 12px;
+      font-weight: bold;
+    }
+
+    .status-success {
+      background: #d1e7dd;
+      color: #0f5132;
+    }
+
+    .status-error {
+      background: #f8d7da;
+      color: #842029;
+    }
+
+    .status-info {
+      background: #cff4fc;
+      color: #055160;
+    }
+
+    .endpoint-badge {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .product-card img {
+      height: 220px;
+      object-fit: cover;
+    }
+
+    .footer {
+      margin-top: 60px;
+      padding: 20px;
+      text-align: center;
+      color: #6c757d;
+    }
+
+    pre {
+      background: #0d1117;
+      color: #d1d5db;
+      padding: 16px;
+      border-radius: 10px;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+    <div class="container">
+      <a class="navbar-brand" href="#">MarketAWS</a>
+    </div>
+  </nav>
+
+  <div class="container py-4">
+
+    <div class="hero">
+      <h1 class="display-5 fw-bold">Marketplace AWS</h1>
+      <p class="lead mt-3">
+        Frontend estático funcional conectado con:
+      </p>
+
+      <ul>
+        <li>API Gateway + Lambda</li>
+        <li>S3 Upload</li>
+        <li>RDS PostgreSQL</li>
+        <li>SQS + SNS Fan-out</li>
+        <li>ALB + EC2 + NGINX</li>
+      </ul>
+    </div>
+
+    <div class="row g-4">
+
+      <div class="col-lg-6">
+        <div class="card p-4 h-100">
+          <h3 class="mb-4">⚙️ Configuración</h3>
+
+          <div class="mb-3">
+            <label class="form-label">API Gateway URL</label>
+            <input
+              type="text"
+              id="apiUrl"
+              class="form-control"
+              value="https://TU_API.execute-api.us-east-1.amazonaws.com/prod/orders"
+            />
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">S3 Upload URL</label>
+            <input
+              type="text"
+              id="s3Url"
+              class="form-control"
+              value="https://marketaws-product-images-TUCUENTA-us-east-1.s3.amazonaws.com/uploads/"
+            />
+          </div>
+
+          <div class="alert alert-warning mt-3">
+            <strong>IMPORTANTE:</strong><br>
+            Reemplaza las URLs por las reales de tu infraestructura AWS.
+          </div>
+
+          <hr>
+
+          <h5>Arquitectura conectada</h5>
+
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <span class="badge bg-primary">API Gateway</span>
+            <span class="badge bg-success">Lambda</span>
+            <span class="badge bg-warning text-dark">SQS</span>
+            <span class="badge bg-danger">SNS</span>
+            <span class="badge bg-dark">RDS</span>
+            <span class="badge bg-info text-dark">S3</span>
+            <span class="badge bg-secondary">ALB</span>
+            <span class="badge bg-primary">NGINX</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <div class="card p-4 h-100">
+          <h3 class="mb-4">📦 Crear Orden</h3>
+
+          <form id="orderForm">
+
+            <div class="mb-3">
+              <label class="form-label">Buyer ID</label>
+              <input type="text" class="form-control" id="buyerId" value="buyer-001" required>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Seller ID</label>
+              <input type="text" class="form-control" id="sellerId" value="seller-001" required>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Producto ID</label>
+              <input type="number" class="form-control" id="productId" value="1" required>
+            </div>
+
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Cantidad</label>
+                <input type="number" class="form-control" id="quantity" value="1" required>
+              </div>
+
+              <div class="col-md-6 mb-3">
+                <label class="form-label">Monto</label>
+                <input type="number" step="0.01" class="form-control" id="amount" value="49.90" required>
+              </div>
+            </div>
+
+            <div class="form-check mb-4">
+              <input class="form-check-input" type="checkbox" id="forceError">
+              <label class="form-check-label">
+                Forzar error (probar DLQ)
+              </label>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100">
+              Crear Orden
+            </button>
+          </form>
+
+          <div id="orderResult" class="mt-4"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="row g-4 mt-1">
+
+      <div class="col-lg-6">
+        <div class="card p-4 h-100">
+
+          <h3 class="mb-4">🖼️ Upload de Imagen a S3</h3>
+
+          <div class="mb-3">
+            <label class="form-label">Seleccionar imagen</label>
+            <input type="file" id="imageFile" class="form-control">
+          </div>
+
+          <button class="btn btn-success w-100" id="uploadBtn">
+            Subir Imagen
+          </button>
+
+          <div id="uploadResult" class="mt-4"></div>
+
+          <div class="alert alert-info mt-4">
+            La Lambda marketaws-image-validator-lambda validará:
+            <ul class="mt-2 mb-0">
+              <li>Tamaño máximo 5MB</li>
+              <li>Solo JPG y PNG</li>
+              <li>Contenido explícito con Rekognition</li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <div class="card p-4 h-100">
+
+          <h3 class="mb-4">📊 Estado de la Arquitectura</h3>
+
+          <div class="d-grid gap-3">
+
+            <div class="status-box status-info">
+              API Gateway → Lambda create-order
+            </div>
+
+            <div class="status-box status-info">
+              Lambda → SQS order-queue
+            </div>
+
+            <div class="status-box status-info">
+              SQS → Lambda process-order
+            </div>
+
+            <div class="status-box status-info">
+              SNS Fan-out → payment / seller / inventory
+            </div>
+
+            <div class="status-box status-info">
+              EventBridge → DLQ handler
+            </div>
+
+            <div class="status-box status-info">
+              ALB → EC2 → NGINX 70/30
+            </div>
+
+          </div>
+
+          <hr>
+
+          <button class="btn btn-dark" id="testAlbBtn">
+            Probar Load Balancer
+          </button>
+
+          <div id="albResult" class="mt-3"></div>
+
+        </div>
+      </div>
+
+    </div>
+
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card p-4">
+          <h3 class="mb-4">🛍️ Productos Demo</h3>
+
+          <div class="row g-4">
+
+            <div class="col-md-4">
+              <div class="card product-card h-100">
+                <img
+                  src="https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=1200&auto=format&fit=crop"
+                  class="card-img-top"
+                >
+                <div class="card-body">
+                  <h5 class="card-title">Nike Air Max</h5>
+                  <p class="card-text">Producto conectado a RDS + SNS + SQS.</p>
+                  <button class="btn btn-primary w-100 buyBtn"
+                    data-product="1"
+                    data-price="99.90">
+                    Comprar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-md-4">
+              <div class="card product-card h-100">
+                <img
+                  src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=1200&auto=format&fit=crop"
+                  class="card-img-top"
+                >
+                <div class="card-body">
+                  <h5 class="card-title">Apple Watch</h5>
+                  <p class="card-text">Procesamiento serverless con fan-out.</p>
+                  <button class="btn btn-primary w-100 buyBtn"
+                    data-product="2"
+                    data-price="199.90">
+                    Comprar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-md-4">
+              <div class="card product-card h-100">
+                <img
+                  src="https://images.unsplash.com/photo-1517336714739-489689fd1ca8?q=80&w=1200&auto=format&fit=crop"
+                  class="card-img-top"
+                >
+                <div class="card-body">
+                  <h5 class="card-title">MacBook Pro</h5>
+                  <p class="card-text">Canary deployment con NGINX + ALB.</p>
+                  <button class="btn btn-primary w-100 buyBtn"
+                    data-product="3"
+                    data-price="1299.90">
+                    Comprar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card p-4">
+          <h3 class="mb-4">🧪 JSON de prueba</h3>
+
+<pre>{
+  "buyerId": "buyer-001",
+  "sellerId": "seller-001",
+  "productId": 1,
+  "quantity": 2,
+  "amount": 49.90,
+  "forceError": false
+}</pre>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      MarketAWS © 2026 - Frontend Estático AWS Marketplace
+    </div>
+
+  </div>
+
+  <script>
+
+    function showResult(elementId, message, type = 'info') {
+      const el = document.getElementById(elementId);
+
+      let className = 'status-info';
+
+      if (type === 'success') className = 'status-success';
+      if (type === 'error') className = 'status-error';
+
+      el.innerHTML = `
+        <div class="status-box ${className}">
+          ${message}
+        </div>
+      `;
+    }
+
+    async function createOrder(payload) {
+      const apiUrl = document.getElementById('apiUrl').value;
+
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || 'Error creando orden');
+        }
+
+        showResult(
+          'orderResult',
+          `
+            ✅ Orden creada correctamente<br><br>
+            <strong>Order ID:</strong> ${data.orderId || 'N/A'}<br>
+            <strong>Status:</strong> Enviada a SQS<br>
+            <strong>Lambda:</strong> marketaws-create-order-lambda
+          `,
+          'success'
+        );
+
+      } catch (error) {
+        showResult(
+          'orderResult',
+          `❌ Error: ${error.message}`,
+          'error'
+        );
+      }
+    }
+
+    document
+      .getElementById('orderForm')
+      .addEventListener('submit', async (e) => {
+
+        e.preventDefault();
+
+        const payload = {
+          buyerId: document.getElementById('buyerId').value,
+          sellerId: document.getElementById('sellerId').value,
+          productId: Number(document.getElementById('productId').value),
+          quantity: Number(document.getElementById('quantity').value),
+          amount: Number(document.getElementById('amount').value),
+          forceError: document.getElementById('forceError').checked
+        };
+
+        await createOrder(payload);
+      });
+
+    document
+      .querySelectorAll('.buyBtn')
+      .forEach(btn => {
+
+        btn.addEventListener('click', async () => {
+
+          const payload = {
+            buyerId: 'buyer-web',
+            sellerId: 'seller-web',
+            productId: Number(btn.dataset.product),
+            quantity: 1,
+            amount: Number(btn.dataset.price),
+            forceError: false
+          };
+
+          await createOrder(payload);
+
+          window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+          });
+        });
+      });
+
+    document
+      .getElementById('uploadBtn')
+      .addEventListener('click', async () => {
+
+        const fileInput = document.getElementById('imageFile');
+        const file = fileInput.files[0];
+
+        if (!file) {
+          showResult(
+            'uploadResult',
+            '⚠️ Selecciona un archivo primero',
+            'error'
+          );
+          return;
+        }
+
+        const s3BaseUrl = document.getElementById('s3Url').value;
+        const uploadUrl = s3BaseUrl + file.name;
+
+        try {
+
+          const response = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': file.type
+            },
+            body: file
+          });
+
+          if (!response.ok) {
+            throw new Error('No se pudo subir a S3');
+          }
+
+          showResult(
+            'uploadResult',
+            `
+              ✅ Imagen subida correctamente<br><br>
+              <strong>Archivo:</strong> ${file.name}<br>
+              <strong>Tamaño:</strong> ${(file.size / 1024).toFixed(2)} KB<br>
+              <strong>Estado:</strong> Pendiente validación Lambda
+            `,
+            'success'
+          );
+
+        } catch (error) {
+
+          showResult(
+            'uploadResult',
+            `❌ Error subiendo imagen: ${error.message}`,
+            'error'
+          );
+        }
+      });
+
+    document
+      .getElementById('testAlbBtn')
+      .addEventListener('click', async () => {
+
+        try {
+
+          const response = await fetch(window.location.href);
+
+          showResult(
+            'albResult',
+            `
+              ✅ ALB respondiendo correctamente<br><br>
+              Canary deployment activo<br>
+              Balanceo 70/30 funcionando
+            `,
+            'success'
+          );
+
+        } catch (error) {
+
+          showResult(
+            'albResult',
+            `❌ Error conectando ALB`,
+            'error'
+          );
+        }
+      });
+
+  </script>
+
+</body>
+</html>

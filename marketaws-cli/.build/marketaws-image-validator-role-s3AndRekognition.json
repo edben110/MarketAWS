@@ -1,0 +1,24 @@
+{
+  "Statement": [
+    {
+      "Action": [
+        "s3:GetObject",
+        "s3:CopyObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::marketaws-product-images-469134084749-us-east-1/*",
+      "Effect": "Allow"
+    },
+    {
+      "Action": "rekognition:DetectModerationLabels",
+      "Resource": "*",
+      "Effect": "Allow"
+    },
+    {
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:us-east-1:469134084749:marketaws-admin-alerts",
+      "Effect": "Allow"
+    }
+  ],
+  "Version": "2012-10-17"
+}

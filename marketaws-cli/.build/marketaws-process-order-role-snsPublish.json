@@ -1,0 +1,10 @@
+{
+  "Statement": [
+    {
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:us-east-1:469134084749:marketaws-marketplace-events",
+      "Effect": "Allow"
+    }
+  ],
+  "Version": "2012-10-17"
+}

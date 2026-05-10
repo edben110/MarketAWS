@@ -1,0 +1,1741 @@
+================================================================================
+GUIA COMPLETA: CONSTRUCCION DE MARKETPLACE CON AWS
+Marketplace con procesamiento de pagos y notificaciones
+Región: us-east-1 | Base de datos: MySQL
+================================================================================
+
+ARQUITECTURA GENERAL
+====================
+Vendedor -> S3 uploads/ -> Lambda validadora -> (ok) / (reject -> rejected/ + SNS)
+Cliente -> API Gateway -> Lambda crear orden -> RDS + SQS principal
+SQS principal -> Lambda procesadora -> simula pago -> SNS fan-out
+SNS fan-out -> SQS pagos
+SNS fan-out -> SQS notificación vendedor
+SNS fan-out -> Lambda inventario -> RDS
+SQS principal DLQ -> EventBridge cada 5 min -> Lambda DLQ -> RDS + SNS admin
+Internet -> ALB -> EC2 NGINX -> app principal 70% / canary 30%
+
+NOMBRES SUGERIDOS
+=================
+Infraestructura:
+- marketaws-vpc
+- marketaws-public-a, marketaws-public-b (subnets públicas)
+- marketaws-private-a, marketaws-private-b (subnets privadas)
+- marketaws-alb-sg (Security Group ALB)
+- marketaws-ec2-sg (Security Group EC2)
+- marketaws-lambda-sg (Security Group Lambda)
+- marketaws-rds-sg (Security Group RDS)
+
+Bases de datos:
+- marketaws-postgres (instancia RDS)
+
+Almacenamiento:
+- marketaws-product-images-<tu-cuenta>-us-east-1
+
+Colas y Temas:
+- marketaws-order-queue
+- marketaws-order-dlq
+- marketaws-marketplace-events
+- marketaws-admin-alerts
+- marketaws-payment-queue
+- marketaws-seller-notifications-queue
+
+Lambdas:
+- marketaws-image-validator-lambda
+- marketaws-create-order-lambda
+- marketaws-process-order-lambda
+- marketaws-inventory-lambda
+- marketaws-dlq-handler-lambda
+
+API y ALB:
+- marketaws-orders-api
+- marketaws-marketplace-alb
+- marketaws-nginx-proxy
+- marketaws-nginx-tg
+
+================================================================================
+FASE 1: PREPARACION
+================================================================================
+
+Paso 1: Crear cuenta AWS
+------------------------
+1. Entra a aws.amazon.com/es/
+2. Pulsa "Create an AWS Account"
+3. Completa correo, contraseña y datos de facturación
+
+Paso 2: Configurar región
+------------------------
+1. Inicia sesión en la consola
+2. Barra superior derecha -> haz clic en la región actual
+3. Selecciona "US East (N. Virginia) us-east-1"
+
+Paso 3: Crear usuario IAM
+------------------------
+1. Ve a IAM (Identity and Access Management)
+2. En el menú izquierdo: "Users" -> "Create user"
+3. Nombre de usuario: marketaws-admin
+4. Marca: "Provide user access to the AWS Management Console"
+5. Pulsa "Next"
+6. En "Permissions options": selecciona "Add user to group"
+7. Pulsa "Create group"
+8. Nombre del grupo: marketaws-admin-group
+9. Adjunta la política: AdministratorAccess
+10. Pulsa "Create group"
+11. Vuelve a la pantalla anterior y asigna el usuario al grupo
+12. Pulsa "Create user"
+13. Ve a "Security credentials" del usuario marketaws-admin
+14. En "Multi-factor authentication" -> "Assign MFA device"
+15. Actívalo con una app autenticadora (Google Authenticator, Authy, etc.)
+
+Validación:
+- En IAM > Users debes ver marketaws-admin
+- El usuario debe mostrar MFA como "Assigned"
+- La región debe ser us-east-1
+
+================================================================================
+FASE 2: RED BASE (VPC, SUBNETS, SECURITY GROUPS)
+================================================================================
+
+Paso 1: Crear VPC
+-----------------
+1. Ve a VPC (Virtual Private Cloud)
+2. En el menú: "Your VPCs" -> "Create VPC"
+3. Selecciona "VPC and more"
+4. Nombre: marketaws-vpc
+5. IPv4 CIDR: 10.0.0.0/16
+6. Número de Availability Zones: 2
+7. Subnets públicas: 2
+8. Subnets privadas: 2
+9. NAT gateways: 1 in 1 AZ
+10. VPC endpoints: None
+11. Pulsa "Create VPC"
+
+Paso 2: Verificar subnets
+--------------------------
+La creación automática debería haber creado:
+- marketaws-public-a-subnet (10.0.1.0/24 o similar)
+- marketaws-public-b-subnet (10.0.2.0/24 o similar)
+- marketaws-private-a-subnet (10.0.11.0/24 o similar)
+- marketaws-private-b-subnet (10.0.12.0/24 o similar)
+
+Si necesitas ajustar CIDRs:
+1. Ve a VPC > Subnets
+2. Selecciona cada subnet
+3. En "Subnet settings" edita el CIDR si es necesario
+
+Paso 3: Verificar Internet Gateway
+-----------------------------------
+1. Ve a VPC > Internet Gateways
+2. Debería existir uno llamado similar a marketaws-igw
+3. Si no existe, crea uno:
+   - Name: marketaws-igw
+   - Pulsa "Create"
+   - Selecciona el IGW -> "Actions" -> "Attach to VPC"
+   - Elige marketaws-vpc
+
+Paso 4: Verificar rutas públicas
+--------------------------------
+1. Ve a VPC > Route Tables
+2. Busca la tabla de rutas pública
+3. En "Routes", debe haber:
+   - Destino: 10.0.0.0/16 -> Target: Local
+   - Destino: 0.0.0.0/0 -> Target: Internet Gateway (marketaws-igw)
+4. En "Subnet associations", deben estar las subnets públicas
+
+Paso 5: Verificar rutas privadas
+--------------------------------
+1. En Route Tables, busca la tabla de rutas privada
+2. En "Routes", debe haber:
+   - Destino: 10.0.0.0/16 -> Target: Local
+   - Destino: 0.0.0.0/0 -> Target: NAT Gateway (en la subnet pública)
+3. En "Subnet associations", deben estar las subnets privadas
+
+Paso 6: Crear Security Groups
+------------------------------
+
+6.1 Security Group para ALB (marketaws-alb-sg):
+   1. Ve a EC2 > Security Groups > Create security group
+   2. Nombre: marketaws-alb-sg
+   3. Descripción: Security group for ALB
+   4. VPC: marketaws-vpc
+   5. Inbound rules:
+      - Type: HTTP, Protocol: TCP, Port: 80, Source: 0.0.0.0/0
+      - Type: HTTPS, Protocol: TCP, Port: 443, Source: 0.0.0.0/0
+   6. Outbound rules: All traffic (por defecto)
+   7. Pulsa "Create security group"
+
+6.2 Security Group para EC2 (marketaws-ec2-sg):
+   1. Nombre: marketaws-ec2-sg
+   2. Descripción: Security group for EC2 instances
+   3. VPC: marketaws-vpc
+   4. Inbound rules:
+      - Type: HTTP, Protocol: TCP, Port: 80, Source: marketaws-alb-sg
+      - Type: SSH, Protocol: TCP, Port: 22, Source: 0.0.0.0/0 (NO ABRAS EN PRODUCCIÓN)
+   5. Outbound rules: All traffic
+   6. Pulsa "Create security group"
+
+6.3 Security Group para Lambda (marketaws-lambda-sg):
+   1. Nombre: marketaws-lambda-sg
+   2. Descripción: Security group for Lambda functions
+   3. VPC: marketaws-vpc
+   4. Inbound rules: None (por defecto)
+   5. Outbound rules: All traffic
+   6. Pulsa "Create security group"
+
+6.4 Security Group para RDS (marketaws-rds-sg):
+   1. Nombre: marketaws-rds-sg
+   2. Descripción: Security group for RDS
+   3. VPC: marketaws-vpc
+   4. Inbound rules:
+      - Type: MySQL/Aurora, Protocol: TCP, Port: 3306, Source: marketaws-lambda-sg
+      - Type: MySQL/Aurora, Protocol: TCP, Port: 3306, Source: marketaws-ec2-sg
+   5. Outbound rules: All traffic
+   6. Pulsa "Create security group"
+
+Validación de Fase 2:
+- 1 VPC creada
+- 4 subnets (2 públicas, 2 privadas)
+- 1 Internet Gateway
+- 1 NAT Gateway
+- 4 Security Groups
+- Rutas públicas hacia IGW
+- Rutas privadas hacia NAT
+
+================================================================================
+FASE 3: BASE DE DATOS (RDS)
+================================================================================
+
+Paso 1: Crear instancia RDS
+---------------------------
+1. Ve a RDS > Databases > Create database
+2. Elige "Standard create"
+3. Engine: MySQL
+4. Engine version: 8.0.35 (o la más reciente disponible)
+5. Template: "Free tier" (si aplica) o "Dev/Test"
+6. DB instance identifier: marketaws-mysql
+7. Master username: marketawsadmin
+8. Master password: crea una fuerte (min 8 caracteres, incluye mayúsculas, números, símbolos)
+9. Instance class: db.t3.micro (o db.t3.small si no tienes free tier)
+10. Storage: 20 GiB
+11. Storage autoscaling: Disable
+12. Multi-AZ: No
+13. Public access: No
+14. VPC: marketaws-vpc
+15. DB subnet group: crea uno nuevo
+    - Nombre: marketaws-db-subnets
+    - Subnets: marketaws-private-a y marketaws-private-b
+    - Pulsa "Create new DB subnet group"
+16. VPC security group: marketaws-rds-sg
+17. Initial database name: marketawsdb
+18. Database port: 3306
+19. Enable backup: Yes (7 días de retención)
+20. Copy snapshots to another region: No
+21. Enable encryption: No (para lab)
+22. Enable Performance Insights: No
+23. Enable Enhanced monitoring: No
+24. Pulsa "Create database"
+
+Paso 2: Esperar a que esté disponible
+-------------------------------------
+1. Ve a RDS > Databases
+2. Selecciona marketaws-mysql
+3. Espera a que el estado cambie a "Available" (toma 5-10 min)
+
+Paso 3: Conectar y crear tablas
+-------------------------------
+1. Ve a RDS > Query Editor
+2. En la lista de bases de datos, busca marketaws-mysql
+3. Haz clic en "Connect with Query Editor"
+4. Si te pide credenciales, usa:
+   - Username: marketawsadmin
+   - Password: la que creaste
+5. Una vez conectado, en el área de texto, copia y ejecuta este SQL:
+
+---
+CREATE TABLE productos (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  seller_id VARCHAR(50) NOT NULL,
+  nombre VARCHAR(200) NOT NULL,
+  descripcion TEXT,
+  precio DECIMAL(10,2) NOT NULL,
+  stock INT NOT NULL DEFAULT 0,
+  imagen_url TEXT,
+  estado VARCHAR(30) NOT NULL DEFAULT 'activo',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE ordenes (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  order_id CHAR(36) NOT NULL DEFAULT (UUID()),
+  buyer_id VARCHAR(50),
+  seller_id VARCHAR(50) NOT NULL,
+  producto_id BIGINT REFERENCES productos(id),
+  cantidad INT NOT NULL,
+  total DECIMAL(10,2) NOT NULL,
+  estado VARCHAR(30) NOT NULL DEFAULT 'creada',
+  payment_status VARCHAR(30) NOT NULL DEFAULT 'pendiente',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE errores (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  source_queue VARCHAR(200),
+  lambda_name VARCHAR(200),
+  error_type VARCHAR(100),
+  message TEXT NOT NULL,
+  raw_payload JSON,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+---
+
+6. Pulsa el botón de ejecutar (play)
+7. Debe terminar sin errores
+
+Validación de Fase 3:
+- marketaws-mysql en estado "Available"
+- SQL ejecutado correctamente
+- 3 tablas creadas (productos, ordenes, errores)
+
+================================================================================
+FASE 4: S3 + VALIDACION
+================================================================================
+
+Paso 1: Crear bucket S3
+-----------------------
+1. Ve a S3 > Create bucket
+2. Bucket name: marketaws-product-images-TUACCOUNT-us-east-1
+   (Reemplaza TUACCOUNT con tu ID de cuenta, visible en IAM)
+3. AWS Region: us-east-1
+4. Object Ownership: ACLs disabled
+5. Block all public access: ON (todas las opciones marcadas)
+6. Versioning: Enable
+7. Encryption: SSE-S3
+8. Server-side encryption key type: Amazon S3 managed keys (SSE-S3)
+9. Object Lock: Disable
+10. Pulsa "Create bucket"
+
+Paso 2: Crear carpetas dentro del bucket
+----------------------------------------
+1. Abre el bucket creado
+2. Pulsa "Create folder"
+3. Nombre: uploads
+4. Pulsa "Create folder"
+5. Pulsa "Create folder" nuevamente
+6. Nombre: rejected
+7. Pulsa "Create folder"
+
+Paso 3: Crear Lambda de validación
+----------------------------------
+1. Ve a Lambda > Create function
+2. Nombre: marketaws-image-validator-lambda
+3. Runtime: Node.js 18.x
+4. Architecture: x86_64
+5. Permissions:
+   - Execution role: Create a new role with basic Lambda permissions
+   - Se creará un rol llamado marketaws-image-validator-lambda-role-XXXXXXXX
+6. Pulsa "Create function"
+
+Paso 4: Configurar permisos de Lambda
+-------------------------------------
+1. En la función Lambda, ve a Configuration > Permissions
+2. Haz clic en el nombre del rol
+3. En el rol, pulsa "Add inline policy"
+4. En el editor de JSON, reemplaza todo con:
+
+---
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:CopyObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::marketaws-product-images-*/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "rekognition:DetectModerationLabels",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "*"
+    }
+  ]
+}
+---
+
+5. Pulsa "Review policy"
+6. Nombre: marketaws-image-validator-policy
+7. Pulsa "Create policy"
+
+Paso 5: Agregar variables de entorno a Lambda
+---------------------------------------------
+1. En la función, ve a Configuration > Environment variables
+2. Pulsa "Edit"
+3. Añade estas variables:
+   - Key: BUCKET_NAME
+     Value: marketaws-product-images-TUACCOUNT-us-east-1
+   - Key: SNS_TOPIC_ARN
+     Value: (dejaremos esto en blanco por ahora, lo actualizaremos después de crear SNS)
+4. Pulsa "Save"
+
+Paso 6: Pegar código de validación en Lambda
+---------------------------------------------
+1. En la función, ve a Code
+2. Selecciona el archivo index.mjs (o similar)
+3. Borra todo el contenido
+4. Pega esto:
+
+---
+const AWS = require('aws-sdk');
+const s3 = new AWS.S3();
+const rekognition = new AWS.Rekognition();
+const sns = new AWS.SNS();
+
+const MAX_SIZE = 5 * 1024 * 1024;
+const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png']);
+
+exports.handler = async (event) => {
+  for (const record of event.Records) {
+    const bucket = record.s3.bucket.name;
+    const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '));
+
+    if (!key.startsWith('uploads/')) continue;
+
+    const head = await s3.headObject({ Bucket: bucket, Key: key }).promise();
+
+    if (head.ContentLength > MAX_SIZE || !ALLOWED_TYPES.has(head.ContentType)) {
+      await rejectFile(bucket, key, 'Invalid size or format');
+      continue;
+    }
+
+    const moderation = await rekognition.detectModerationLabels({
+      Image: { S3Object: { Bucket: bucket, Name: key } },
+      MinConfidence: 60
+    }).promise();
+
+    if (moderation.ModerationLabels && moderation.ModerationLabels.length > 0) {
+      await rejectFile(bucket, key, 'Explicit content detected');
+      continue;
+    }
+
+    console.log(`Image accepted: ${key}`);
+  }
+
+  return { ok: true };
+};
+
+async function rejectFile(bucket, key, reason) {
+  const fileName = key.split('/').pop();
+  const rejectedKey = `rejected/${fileName}`;
+
+  await s3.copyObject({
+    Bucket: bucket,
+    CopySource: `${bucket}/${encodeURIComponent(key)}`,
+    Key: rejectedKey
+  }).promise();
+
+  await s3.deleteObject({ Bucket: bucket, Key: key }).promise();
+
+  await sns.publish({
+    TopicArn: process.env.SNS_TOPIC_ARN,
+    Message: JSON.stringify({
+      type: 'image.rejected',
+      bucket,
+      key: rejectedKey,
+      reason
+    }),
+    MessageAttributes: {
+      eventType: { DataType: 'String', StringValue: 'image.rejected' },
+      destination: { DataType: 'String', StringValue: 'seller-notifications-queue' }
+    }
+  }).promise();
+}
+---
+
+5. Pulsa "Deploy"
+
+Paso 7: Crear notificación S3 para invocar Lambda
+-------------------------------------------------
+1. Ve a S3 > marketaws-product-images-...
+2. Ve a Properties > Event notifications
+3. Pulsa "Create event notification"
+4. Nombre: image-upload-trigger
+5. Event types: selecciona "All object create events"
+6. Prefix: uploads/
+7. Suffix: (dejar vacío)
+8. Destination:
+   - Type: Lambda function
+   - Lambda function: marketaws-image-validator-lambda
+9. Pulsa "Save"
+10. Si aparece un aviso sobre permisos, elige "Add bucket policy" o "Grant permissions"
+
+Validación de Fase 4:
+- S3 bucket creado con carpetas uploads/ y rejected/
+- Lambda creada sin errores de sintaxis
+- Trigger de S3 a Lambda configurado
+- Variables de entorno BUCKET_NAME establecidas
+
+================================================================================
+FASE 5: SQS + DLQ
+================================================================================
+
+Paso 1: Crear Dead Letter Queue
+-------------------------------
+1. Ve a SQS > Create queue
+2. Name: marketaws-order-dlq
+3. Type: Standard
+4. Visibilidad timeout: 90 segundos
+5. Message retention period: 14 days
+6. Delivery delay: 0 seconds
+7. Receive message wait time: 20 seconds
+8. Pulsa "Create queue"
+9. Copia el Queue URL (lo necesitarás después)
+
+Paso 2: Crear cola principal
+----------------------------
+1. Ve a SQS > Create queue
+2. Name: marketaws-order-queue
+3. Type: Standard
+4. Visibility timeout: 90 segundos
+5. Message retention period: 14 days
+6. Delivery delay: 0 seconds
+7. En "Dead-letter queue":
+   - Marca "Enable redrive policy"
+   - Dead-letter queue: marketaws-order-dlq
+   - Max receive count: 3
+8. Receive message wait time: 20 seconds
+9. Pulsa "Create queue"
+10. Copia el Queue URL
+
+Paso 3: Crear colas adicionales
+-------------------------------
+Repite el proceso para crear estas colas (sin redrive policy):
+
+3.1 marketaws-payment-queue
+   - Type: Standard
+   - Visibility timeout: 90 segundos
+
+3.2 marketaws-seller-notifications-queue
+   - Type: Standard
+   - Visibility timeout: 90 segundos
+
+Paso 4: Verificar redrive policy
+--------------------------------
+1. Abre marketaws-order-queue
+2. Ve a "Redrive policy"
+3. Debe mostrar: Dead-letter queue: marketaws-order-dlq
+4. Max receive count: 3
+
+Validación de Fase 5:
+- 2 colas SQS principales creadas (order-queue, order-dlq)
+- 2 colas SQS de fan-out creadas (payment-queue, seller-notifications-queue)
+- Redrive policy configurada correctamente
+
+================================================================================
+FASE 6: SNS + FAN-OUT
+================================================================================
+
+Paso 1: Crear tema principal
+---------------------------
+1. Ve a SNS > Topics > Create topic
+2. Type: Standard
+3. Name: marketaws-marketplace-events
+4. Pulsa "Create topic"
+5. Copia el ARN (lo necesitarás después)
+
+Paso 2: Crear tema de alertas admin
+----------------------------------
+1. Ve a SNS > Topics > Create topic
+2. Type: Standard
+3. Name: marketaws-admin-alerts
+4. Pulsa "Create topic"
+5. Copia el ARN
+
+Paso 3: Crear suscripción email en admin-alerts
+----------------------------------------------
+1. Abre marketaws-admin-alerts
+2. Pulsa "Create subscription"
+3. Protocol: Email
+4. Endpoint: tu correo electrónico
+5. Pulsa "Create subscription"
+6. Revisa tu correo y confirma la suscripción
+
+Paso 4: Suscripción 1 - SQS para pagos
+--------------------------------------
+1. Abre marketaws-marketplace-events
+2. Pulsa "Create subscription"
+3. Protocol: Amazon SQS
+4. Endpoint: ARN de marketaws-payment-queue
+5. Raw message delivery: Disable
+6. En "Subscription filter policy":
+   - Filter scope: Message attributes
+   - Pega este JSON:
+
+---
+{
+  "eventType": ["payment.completed"],
+  "destination": ["payment-queue"]
+}
+---
+
+7. Pulsa "Create subscription"
+
+Paso 5: Suscripción 2 - SQS para notificaciones vendedor
+-------------------------------------------------------
+1. Pulsa "Create subscription"
+2. Protocol: Amazon SQS
+3. Endpoint: ARN de marketaws-seller-notifications-queue
+4. Raw message delivery: Disable
+5. En "Subscription filter policy":
+   - Filter scope: Message attributes
+   - Pega este JSON:
+
+---
+{
+  "eventType": ["seller.notification", "image.rejected"],
+  "destination": ["seller-notifications-queue"]
+}
+---
+
+6. Pulsa "Create subscription"
+
+Paso 6: Suscripción 3 - Lambda para inventario (veremos después de crear Lambda)
+--------------------------------------------------------------------------------
+Se configura en la Fase 7 después de crear la Lambda
+
+Paso 7: Configurar permisos en colas SQS
+----------------------------------------
+
+7.1 Para marketaws-payment-queue:
+    1. Abre la cola
+    2. Ve a "Access policy"
+    3. Pulsa "Edit"
+    4. Reemplaza todo con:
+
+---
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSNSTopicSendMessage",
+      "Effect": "Allow",
+      "Principal": { "Service": "sns.amazonaws.com" },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:us-east-1:ACCOUNT_ID:marketaws-payment-queue",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "arn:aws:sns:us-east-1:ACCOUNT_ID:marketaws-marketplace-events"
+        }
+      }
+    }
+  ]
+}
+---
+
+    (Reemplaza ACCOUNT_ID con tu ID de cuenta)
+    5. Pulsa "Save"
+
+7.2 Para marketaws-seller-notifications-queue:
+    Repite lo mismo, cambiando el ARN de la cola
+
+Validación de Fase 6:
+- 2 temas SNS creados
+- 2 suscripciones SQS a marketaws-marketplace-events
+- Filtros JSON aplicados correctamente
+- Permisos en colas SQS configurados
+
+================================================================================
+FASE 7: LAMBDAS
+================================================================================
+
+LAMBDA 1: marketaws-create-order-lambda
+=======================================
+
+Paso 1: Crear la función
+------------------------
+1. Ve a Lambda > Create function
+2. Name: marketaws-create-order-lambda
+3. Runtime: Node.js 18.x
+4. Role: Create a new role with basic Lambda permissions
+5. Pulsa "Create function"
+
+Paso 2: Configurar VPC (opcional pero recomendado)
+-------------------------------------------------
+1. Ve a Configuration > VPC
+2. Pulsa "Edit"
+3. VPC: marketaws-vpc
+4. Subnets: selecciona marketaws-private-a y marketaws-private-b
+5. Security group: marketaws-lambda-sg
+6. Pulsa "Save"
+
+Paso 3: Agregar variables de entorno
+-----------------------------------
+1. Ve a Configuration > Environment variables
+2. Pulsa "Edit"
+3. Añade:
+   - Key: DB_HOST | Value: endpoint de RDS (sin puerto)
+   - Key: DB_PORT | Value: 3306
+   - Key: DB_NAME | Value: marketawsdb
+   - Key: DB_USER | Value: marketawsadmin
+   - Key: DB_PASSWORD | Value: la contraseña que creaste
+   - Key: ORDER_QUEUE_URL | Value: URL de marketaws-order-queue
+4. Pulsa "Save"
+
+Paso 4: Configurar permisos
+--------------------------
+1. Ve a Configuration > Permissions
+2. Haz clic en el rol
+3. Pulsa "Add inline policy"
+4. Pega:
+
+---
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:us-east-1:ACCOUNT_ID:marketaws-order-queue"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNetworkInterface",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DeleteNetworkInterface"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+---
+
+5. Nombre: marketaws-create-order-policy
+6. Pulsa "Create policy"
+
+Paso 5: Pegar código
+-------------------
+1. En Code, reemplaza todo con:
+
+---
+const AWS = require('aws-sdk');
+const mysql = require('mysql2/promise');
+const crypto = require('crypto');
+
+const sqs = new AWS.SQS();
+
+exports.handler = async (event) => {
+  const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+  const orderId = crypto.randomUUID();
+
+  const connection = await mysql.createConnection({
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT || 3306),
+    database: process.env.DB_NAME,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD
+  });
+
+  await connection.execute(
+    'INSERT INTO ordenes (order_id, buyer_id, seller_id, producto_id, cantidad, total, estado, payment_status) VALUES (?, ?, ?, ?, ?, ?, "creada", "pendiente")',
+    [
+      orderId,
+      body.buyerId,
+      body.sellerId,
+      body.productId,
+      body.quantity,
+      body.amount
+    ]
+  );
+  await connection.end();
+
+  await sqs.sendMessage({
+    QueueUrl: process.env.ORDER_QUEUE_URL,
+    MessageBody: JSON.stringify({ orderId, ...body }),
+    MessageAttributes: {
+      eventType: { DataType: 'String', StringValue: 'order.created' },
+      destination: { DataType: 'String', StringValue: 'processing' }
+    }
+  }).promise();
+
+  return {
+    statusCode: 201,
+    body: JSON.stringify({ message: 'Order created', orderId })
+  };
+};
+---
+
+2. Pulsa "Deploy"
+
+NOTA: Este código usa 'mysql2' (MySQL client). Lambda no lo tiene instalado por defecto.
+      Para producción, debes:
+      - En tu PC, crear una carpeta
+      - Ejecutar: npm install mysql2
+      - Crear un ZIP con node_modules/
+      - En Lambda, subir como .zip
+
+      Para lab, puedes probar sin la BD usando AWS Lambda SDK solo
+
+Paso 6: Crear Layer para dependencias (opcional para lab)
+-------------------------------------------------------
+Saltamos este paso en lab. En producción:
+1. Ve a Lambda > Layers > Create layer
+2. Upload zip file con node_modules
+3. Compatible runtimes: Node.js 18.x
+4. En la función, añade la layer en Configuration > Layers
+
+
+LAMBDA 2: marketaws-process-order-lambda
+========================================
+
+Paso 1: Crear función
+---------------------
+1. Ve a Lambda > Create function
+2. Name: marketaws-process-order-lambda
+3. Runtime: Node.js 18.x
+4. Role: Create a new role with basic Lambda permissions
+5. Pulsa "Create function"
+
+Paso 2: Configurar VPC
+--------------------
+1. Ve a Configuration > VPC
+2. VPC: marketaws-vpc
+3. Subnets: marketaws-private-a, marketaws-private-b
+4. Security group: marketaws-lambda-sg
+
+Paso 3: Configurar trigger de SQS
+--------------------------------
+1. Ve a Function overview
+2. Pulsa "Add trigger"
+3. Selecciona SQS
+4. SQS queue: marketaws-order-queue
+5. Batch size: 10
+6. Batch window: 0
+7. Maximum age of record: 604800
+8. Parallelization factor: 1
+9. Pulsa "Add"
+
+Paso 4: Agregar variables de entorno
+-----------------------------------
+1. Ve a Configuration > Environment variables
+2. Pulsa "Edit"
+3. Añade:
+   - Key: DB_HOST | Value: endpoint RDS
+   - Key: DB_PORT | Value: 3306
+   - Key: DB_NAME | Value: marketawsdb
+   - Key: DB_USER | Value: marketawsadmin
+   - Key: DB_PASSWORD | Value: tu contraseña
+   - Key: SNS_TOPIC_ARN | Value: ARN de marketaws-marketplace-events
+4. Pulsa "Save"
+
+Paso 5: Configurar permisos
+--------------------------
+1. Ve a Configuration > Permissions
+2. Haz clic en el rol
+3. Pulsa "Add inline policy"
+4. Pega:
+
+---
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:us-east-1:ACCOUNT_ID:marketaws-marketplace-events"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:ACCOUNT_ID:marketaws-order-queue"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNetworkInterface",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DeleteNetworkInterface"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+---
+
+5. Nombre: marketaws-process-order-policy
+6. Pulsa "Create policy"
+
+Paso 6: Timeout
+--------------
+1. Ve a Configuration > General configuration
+2. Pulsa "Edit"
+3. Timeout: 30 seconds
+4. Memory: 256 MB
+5. Pulsa "Save"
+
+Paso 7: Pegar código
+-------------------
+1. En Code, reemplaza todo con:
+
+---
+const AWS = require('aws-sdk');
+const mysql = require('mysql2/promise');
+
+const sns = new AWS.SNS();
+
+exports.handler = async (event) => {
+  for (const record of event.Records) {
+    const order = JSON.parse(record.body);
+
+    if (order.forceError) {
+      throw new Error('Forced failure for DLQ test');
+    }
+
+    const paymentStatus = 'paid';
+
+    const connection = await mysql.createConnection({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT || 3306),
+      database: process.env.DB_NAME,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD
+    });
+
+    await connection.execute(
+      'UPDATE ordenes SET payment_status = ?, estado = ?, updated_at = NOW() WHERE order_id = ?',
+      [paymentStatus, 'pagada', order.orderId]
+    );
+    await connection.end();
+
+    await publishEvent('payment.completed', 'payment-queue', {
+      orderId: order.orderId,
+      sellerId: order.sellerId,
+      amount: order.amount
+    });
+
+    await publishEvent('seller.notification', 'seller-notifications-queue', {
+      orderId: order.orderId,
+      sellerId: order.sellerId
+    });
+
+    await publishEvent('inventory.update', 'inventory-lambda', {
+      orderId: order.orderId,
+      productId: order.productId,
+      quantity: order.quantity
+    });
+  }
+
+  return { ok: true };
+};
+
+async function publishEvent(eventType, destination, detail) {
+  await sns.publish({
+    TopicArn: process.env.SNS_TOPIC_ARN,
+    Message: JSON.stringify({ eventType, destination, detail }),
+    MessageAttributes: {
+      eventType: { DataType: 'String', StringValue: eventType },
+      destination: { DataType: 'String', StringValue: destination }
+    }
+  }).promise();
+}
+---
+
+2. Pulsa "Deploy"
+
+
+LAMBDA 3: marketaws-inventory-lambda
+===================================
+
+Paso 1: Crear función
+---------------------
+1. Ve a Lambda > Create function
+2. Name: marketaws-inventory-lambda
+3. Runtime: Node.js 18.x
+4. Role: Create a new role with basic Lambda permissions
+5. Pulsa "Create function"
+
+Paso 2: Configurar VPC
+--------------------
+1. Ve a Configuration > VPC
+2. VPC: marketaws-vpc
+3. Subnets: marketaws-private-a, marketaws-private-b
+4. Security group: marketaws-lambda-sg
+
+Paso 3: Agregar variables de entorno
+-----------------------------------
+1. Ve a Configuration > Environment variables
+2. Pulsa "Edit"
+3. Añade:
+   - Key: DB_HOST | Value: endpoint RDS
+   - Key: DB_PORT | Value: 3306
+   - Key: DB_NAME | Value: marketawsdb
+   - Key: DB_USER | Value: marketawsadmin
+   - Key: DB_PASSWORD | Value: tu contraseña
+4. Pulsa "Save"
+
+Paso 4: Configurar permisos
+--------------------------
+1. Ve a Configuration > Permissions
+2. Haz clic en el rol
+3. Pulsa "Add inline policy"
+4. Pega:
+
+---
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNetworkInterface",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DeleteNetworkInterface"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+---
+
+5. Nombre: marketaws-inventory-policy
+6. Pulsa "Create policy"
+
+Paso 5: Pegar código
+-------------------
+1. En Code, reemplaza todo con:
+
+---
+const mysql = require('mysql2/promise');
+
+exports.handler = async (event) => {
+  for (const record of event.Records) {
+    const msg = JSON.parse(record.Sns.Message);
+
+    if (msg.eventType !== 'inventory.update') continue;
+
+    const connection = await mysql.createConnection({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT || 3306),
+      database: process.env.DB_NAME,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD
+    });
+
+    await connection.execute(
+      'UPDATE productos SET stock = GREATEST(stock - ?, 0) WHERE id = ?',
+      [msg.detail.quantity, msg.detail.productId]
+    );
+    await connection.end();
+  }
+};
+---
+
+2. Pulsa "Deploy"
+
+Paso 6: Crear suscripción SNS
+----------------------------
+1. Ve a SNS > marketaws-marketplace-events
+2. Pulsa "Create subscription"
+3. Protocol: AWS Lambda
+4. Endpoint: ARN de marketaws-inventory-lambda
+5. En "Subscription filter policy":
+   - Filter scope: Message attributes
+   - Pega:
+
+---
+{
+  "eventType": ["inventory.update"],
+  "destination": ["inventory-lambda"]
+}
+---
+
+6. Pulsa "Create subscription"
+
+
+LAMBDA 4: marketaws-dlq-handler-lambda
+=====================================
+
+Paso 1: Crear función
+---------------------
+1. Ve a Lambda > Create function
+2. Name: marketaws-dlq-handler-lambda
+3. Runtime: Node.js 18.x
+4. Role: Create a new role with basic Lambda permissions
+5. Pulsa "Create function"
+
+Paso 2: Configurar VPC
+--------------------
+1. Ve a Configuration > VPC
+2. VPC: marketaws-vpc
+3. Subnets: marketaws-private-a, marketaws-private-b
+4. Security group: marketaws-lambda-sg
+
+Paso 3: Agregar variables de entorno
+-----------------------------------
+1. Ve a Configuration > Environment variables
+2. Pulsa "Edit"
+3. Añade:
+   - Key: DLQ_URL | Value: URL de marketaws-order-dlq
+   - Key: DB_HOST | Value: endpoint RDS
+   - Key: DB_PORT | Value: 3306
+   - Key: DB_NAME | Value: marketawsdb
+   - Key: DB_USER | Value: marketawsadmin
+   - Key: DB_PASSWORD | Value: tu contraseña
+   - Key: ADMIN_TOPIC_ARN | Value: ARN de marketaws-admin-alerts
+4. Pulsa "Save"
+
+Paso 4: Configurar permisos
+--------------------------
+1. Ve a Configuration > Permissions
+2. Haz clic en el rol
+3. Pulsa "Add inline policy"
+4. Pega:
+
+---
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:ACCOUNT_ID:marketaws-order-dlq"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:us-east-1:ACCOUNT_ID:marketaws-admin-alerts"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNetworkInterface",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DeleteNetworkInterface"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+---
+
+5. Nombre: marketaws-dlq-handler-policy
+6. Pulsa "Create policy"
+
+Paso 5: Pegar código
+-------------------
+1. En Code, reemplaza todo con:
+
+---
+const AWS = require('aws-sdk');
+const mysql = require('mysql2/promise');
+
+const sqs = new AWS.SQS();
+const sns = new AWS.SNS();
+
+exports.handler = async () => {
+  const received = await sqs.receiveMessage({
+    QueueUrl: process.env.DLQ_URL,
+    MaxNumberOfMessages: 10,
+    WaitTimeSeconds: 0,
+    MessageAttributeNames: ['All']
+  }).promise();
+
+  if (!received.Messages || received.Messages.length === 0) {
+    return { processed: 0 };
+  }
+
+  for (const message of received.Messages) {
+    const payload = message.Body;
+
+    const connection = await mysql.createConnection({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT || 3306),
+      database: process.env.DB_NAME,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD
+    });
+
+    await connection.execute(
+      'INSERT INTO errores (source_queue, lambda_name, error_type, message, raw_payload) VALUES (?, ?, ?, ?, ?)',
+      [
+        'marketaws-order-queue',
+        'marketaws-process-order-lambda',
+        'DLQ',
+        'Message moved to DLQ',
+        JSON.stringify({ body: payload })
+      ]
+    );
+    await connection.end();
+
+    await sns.publish({
+      TopicArn: process.env.ADMIN_TOPIC_ARN,
+      Message: JSON.stringify({
+        subject: 'DLQ alert',
+        queue: 'marketaws-order-dlq',
+        body: payload
+      })
+    }).promise();
+
+    await sqs.deleteMessage({
+      QueueUrl: process.env.DLQ_URL,
+      ReceiptHandle: message.ReceiptHandle
+    }).promise();
+  }
+
+  return { processed: received.Messages.length };
+};
+---
+
+2. Pulsa "Deploy"
+
+Paso 6: Timeout
+--------------
+1. Ve a Configuration > General configuration
+2. Pulsa "Edit"
+3. Timeout: 30 seconds
+4. Memory: 256 MB
+5. Pulsa "Save"
+
+Validación de Fase 7:
+- 4 Lambdas creadas sin errores de sintaxis
+- Triggers correctos en cada función
+- Variables de entorno configuradas
+- Permisos IAM asignados
+
+================================================================================
+FASE 8: API GATEWAY
+================================================================================
+
+Paso 1: Crear API
+-----------------
+1. Ve a API Gateway > Create API
+2. Elige "REST API"
+3. Pulsa "Build"
+4. API name: marketaws-orders-api
+5. Endpoint type: Regional
+6. Pulsa "Create API"
+
+Paso 2: Crear recurso /orders
+-----------------------------
+1. En el editor, selecciona la raíz (/)
+2. Pulsa "Actions" > "Create Resource"
+3. Resource name: orders
+4. Resource path: /orders
+5. Mark "Enable API Gateway CORS": Yes
+6. Pulsa "Create Resource"
+
+Paso 3: Crear método POST
+-----------------------
+1. Selecciona /orders
+2. Pulsa "Actions" > "Create Method" > "POST"
+3. Integration type: Lambda Function
+4. Marca "Use Lambda Proxy integration"
+5. Lambda region: us-east-1
+6. Lambda function: marketaws-create-order-lambda
+7. Pulsa "Save"
+8. Si pregunta por permisos, selecciona "OK"
+
+Paso 4: Desplegar API
+--------------------
+1. Pulsa "Actions" > "Deploy API"
+2. Deployment stage: Create new stage
+3. Stage name: prod
+4. Pulsa "Deploy"
+5. Copia la URL de invocación (algo como https://xxxxx.execute-api.us-east-1.amazonaws.com/prod)
+
+Validación de Fase 8:
+- API Gateway creada
+- Método POST /orders conectado a Lambda
+- URL de invocación activa
+
+================================================================================
+FASE 9: EC2 + NGINX
+================================================================================
+
+Paso 1: Crear IAM role para EC2
+-------------------------------
+1. Ve a IAM > Roles > Create role
+2. Trusted entity type: AWS service
+3. Use case: EC2
+4. Pulsa "Next"
+5. En "Permissions", adjunta:
+   - AmazonSSMManagedInstanceCore
+   - CloudWatchAgentServerPolicy (opcional)
+6. Role name: marketaws-ec2-ssm-role
+7. Pulsa "Create role"
+
+Paso 2: Lanzar instancia EC2
+---------------------------
+1. Ve a EC2 > Instances > Launch instances
+2. Name: marketaws-nginx-proxy
+3. AMI: selecciona "Amazon Linux 2023"
+4. Instance type: t3.micro
+5. Key pair: Proceed without a key pair
+6. Network settings:
+   - VPC: marketaws-vpc
+   - Subnet: marketaws-private-a
+   - Auto-assign public IP: Disable
+   - Security group: marketaws-ec2-sg
+7. IAM instance profile: marketaws-ec2-ssm-role
+8. Storage: 8 GiB
+
+Paso 3: User data
+-----------------
+1. En "Advanced details", ve a "User data"
+2. Pega esto:
+
+---
+#!/bin/bash
+dnf update -y
+dnf install -y nginx nodejs
+
+cat >/home/ec2-user/app-main.js <<'EOF'
+const http = require('http');
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    return res.end('ok-main');
+  }
+  res.writeHead(200, {'Content-Type': 'application/json'});
+  res.end(JSON.stringify({ version: 'main', port: 3001 }));
+}).listen(3001, '127.0.0.1');
+EOF
+
+cat >/home/ec2-user/app-canary.js <<'EOF'
+const http = require('http');
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    return res.end('ok-canary');
+  }
+  res.writeHead(200, {'Content-Type': 'application/json'});
+  res.end(JSON.stringify({ version: 'canary', port: 3002 }));
+}).listen(3002, '127.0.0.1');
+EOF
+
+cat >/etc/systemd/system/app-main.service <<'EOF'
+[Unit]
+Description=MarketAWS Main App
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /home/ec2-user/app-main.js
+Restart=always
+User=ec2-user
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/app-canary.service <<'EOF'
+[Unit]
+Description=MarketAWS Canary App
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /home/ec2-user/app-canary.js
+Restart=always
+User=ec2-user
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now nginx app-main app-canary
+---
+
+3. Pulsa "Launch instance"
+4. Espera a que la instancia esté "running"
+
+Paso 4: Conectar vía Session Manager
+-----------------------------------
+1. Ve a Systems Manager > Session Manager
+2. Pulsa "Start session"
+3. Selecciona marketaws-nginx-proxy
+4. Pulsa "Start session"
+5. Se abrirá una terminal en el navegador
+
+Paso 5: Configurar NGINX
+-----------------------
+En la terminal del Session Manager, ejecuta:
+
+1. Crea/reemplaza /etc/nginx/nginx.conf:
+
+sudo tee /etc/nginx/nginx.conf > /dev/null <<'EOF'
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream marketaws_app {
+        server 127.0.0.1:3001 weight=70 max_fails=3 fail_timeout=10s;
+        server 127.0.0.1:3002 weight=30 max_fails=3 fail_timeout=10s;
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        server_name _;
+
+        location = /health {
+            add_header Content-Type text/plain;
+            return 200 'ok';
+        }
+
+        location / {
+            proxy_pass http://marketaws_app;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+}
+EOF
+
+2. Valida la sintaxis:
+sudo nginx -t
+
+3. Recarga NGINX:
+sudo systemctl reload nginx
+
+4. Verifica que esté corriendo:
+sudo systemctl status nginx
+
+Paso 6: Cambiar pesos sin downtime
+---------------------------------
+Para cambiar de 70/30 a 80/20:
+
+1. En Session Manager, ejecuta:
+sudo nano /etc/nginx/nginx.conf
+
+2. Busca estas líneas:
+server 127.0.0.1:3001 weight=70 max_fails=3 fail_timeout=10s;
+server 127.0.0.1:3002 weight=30 max_fails=3 fail_timeout=10s;
+
+3. Cambia a:
+server 127.0.0.1:3001 weight=80 max_fails=3 fail_timeout=10s;
+server 127.0.0.1:3002 weight=20 max_fails=3 fail_timeout=10s;
+
+4. Ctrl+O, Enter, Ctrl+X para guardar
+
+5. Valida y recarga:
+sudo nginx -t
+sudo systemctl reload nginx
+
+IMPORTANTE: NO reinicies la instancia, solo recarga NGINX
+
+Paso 7: Crear ALB
+-----------------
+1. Ve a EC2 > Load Balancers > Create load balancer
+2. Elige "Application Load Balancer"
+3. Name: marketaws-marketplace-alb
+4. Scheme: Internet-facing
+5. IP address type: IPv4
+6. VPC: marketaws-vpc
+7. Subnets: marketaws-public-a y marketaws-public-b
+8. Security groups: marketaws-alb-sg
+9. Listener HTTP:80
+
+Paso 8: Crear Target Group
+--------------------------
+Mientras creas el ALB:
+
+1. Target type: Instances
+2. Target group name: marketaws-nginx-tg
+3. Protocol: HTTP
+4. Port: 80
+5. Health checks:
+   - Protocol: HTTP
+   - Path: /health
+   - Port: traffic port
+   - Healthy threshold: 2
+   - Unhealthy threshold: 2
+   - Timeout: 5 seconds
+   - Interval: 30 seconds
+
+Paso 9: Registrar instancia en Target Group
+-------------------------------------------
+1. En el paso final del ALB, selecciona la instancia marketaws-nginx-proxy
+2. Puerto: 80
+3. Pulsa "Include as pending below"
+4. Pulsa "Create target group" (o "Next")
+5. Pulsa "Create load balancer"
+
+Paso 10: Verificar estado
+--------------------------
+1. Ve a EC2 > Target Groups > marketaws-nginx-tg
+2. En "Targets", debe mostrar la instancia como "Healthy"
+3. Copia el DNS name del ALB (URL pública)
+
+Validación de Fase 9:
+- EC2 instancia running
+- NGINX recargado sin errores
+- ALB creado
+- Target Group con instancia Healthy
+- ALB responde a requests HTTP
+
+================================================================================
+FASE 10: EVENTBRIDGE
+================================================================================
+
+Paso 1: Crear regla
+-------------------
+1. Ve a EventBridge > Rules > Create rule
+2. Name: marketaws-dlq-every-5-min
+3. Rule type: Schedule
+4. Schedule pattern: rate(5 minutes)
+5. Pulsa "Create rule"
+
+Paso 2: Añadir target
+--------------------
+1. En "Select target", elige AWS Lambda function
+2. Function: marketaws-dlq-handler-lambda
+3. Pulsa "Create rule"
+
+Paso 3: Verificar permisos
+--------------------------
+1. Ve a Lambda > marketaws-dlq-handler-lambda
+2. En "Configuration > Permissions", verifica que EventBridge tenga permiso
+3. Si no, añade una policy con:
+
+---
+{
+  "Effect": "Allow",
+  "Principal": { "Service": "events.amazonaws.com" },
+  "Action": "lambda:InvokeFunction",
+  "Resource": "arn:aws:lambda:us-east-1:ACCOUNT_ID:function:marketaws-dlq-handler-lambda"
+}
+---
+
+Validación de Fase 10:
+- EventBridge rule creada
+- Target apuntando a Lambda DLQ handler
+- Regla en estado Enabled
+
+================================================================================
+PRUEBAS
+================================================================================
+
+PRUEBA 1: Simular orden exitosa
+==============================
+
+1. Ve a API Gateway > marketaws-orders-api
+2. Ve a Resources > POST /orders
+3. Pulsa "TEST"
+4. En "Request Body", pega:
+
+---
+{
+  "buyerId": "buyer-001",
+  "sellerId": "seller-001",
+  "productId": 1,
+  "quantity": 2,
+  "amount": 49.90,
+  "forceError": false
+}
+---
+
+5. Pulsa "Test"
+6. Debes recibir respuesta 201 con orderId
+
+VERIFICACIONES:
+- RDS: SELECT * FROM ordenes; debe mostrar la orden
+- SQS: ve a marketaws-order-queue > Send and receive messages
+  Pulsa "Poll for messages" para ver si llegó el mensaje
+- SNS: revisa si recibiste notificaciones por email
+- Lambda: revisa CloudWatch Logs de marketaws-process-order-lambda
+
+
+PRUEBA 2: Forzar error para probar DLQ
+======================================
+
+1. En API Gateway, envía:
+
+---
+{
+  "buyerId": "buyer-001",
+  "sellerId": "seller-001",
+  "productId": 1,
+  "quantity": 2,
+  "amount": 49.90,
+  "forceError": true
+}
+---
+
+2. Pulsa "Test"
+
+VERIFICACIONES:
+- La orden se crea en RDS
+- Se envía a SQS marketaws-order-queue
+- Lambda falla 3 veces
+- Mensaje va a marketaws-order-dlq
+- Espera 5 minutos o ejecuta la Lambda DLQ manualmente
+- Ve a RDS > Query Editor > SELECT * FROM errores;
+- Debes recibir email de marketaws-admin-alerts
+
+
+PRUEBA 3: Probar Fan-out de SNS
+===============================
+
+1. Ve a SNS > Topics > marketaws-marketplace-events
+2. Pulsa "Publish message"
+3. Subject: test
+4. Message body: { "test": "data" }
+5. En "Message attributes", añade:
+   - Name: eventType | Type: String | Value: payment.completed
+   - Name: destination | Type: String | Value: payment-queue
+6. Pulsa "Publish"
+
+VERIFICACIONES:
+- Ve a SQS > marketaws-payment-queue > Poll for messages
+- Debe llegar el mensaje (con filtro aplicado)
+
+7. Repite con eventType: seller.notification
+   Debe llegar a marketaws-seller-notifications-queue
+
+8. Repite con eventType: inventory.update
+   Debe invocar marketaws-inventory-lambda
+
+
+PRUEBA 4: Probar S3 + validación
+================================
+
+1. Ve a S3 > marketaws-product-images-...
+2. En la carpeta "uploads", sube un archivo .jpg válido (<5MB)
+
+VERIFICACIONES:
+- Espera 10 segundos
+- La imagen debe seguir en "uploads/"
+- CloudWatch Logs de Lambda debe mostrar: "Image accepted"
+
+3. Sube un archivo .txt a "uploads/"
+
+VERIFICACIONES:
+- Debe moverse a "rejected/"
+- Recibirás email de SNS
+
+4. Sube un archivo >5MB
+
+VERIFICACIONES:
+- Debe moverse a "rejected/"
+
+
+PRUEBA 5: Verificar NGINX load balancing
+========================================
+
+1. Copia la URL del ALB (algo como http://marketaws-marketplace-alb-123456.us-east-1.elb.amazonaws.com)
+2. Accede desde el navegador varias veces
+3. Verás respuestas alternas de main y canary (aproximadamente 70% main, 30% canary)
+
+Puedes ver esto con curl desde Session Manager:
+for i in {1..10}; do curl http://localhost/; done
+
+Ejemplo de respuesta:
+{"version":"main","port":3001}
+{"version":"main","port":3001}
+{"version":"canary","port":3002}
+{"version":"main","port":3001}
+...
+
+================================================================================
+CHECKLIST FINAL
+================================================================================
+
+INFRAESTRUCTURA:
+[ ] VPC creada (marketaws-vpc, 10.0.0.0/16)
+[ ] 2 subnets públicas (10.0.1.0/24, 10.0.2.0/24)
+[ ] 2 subnets privadas (10.0.11.0/24, 10.0.12.0/24)
+[ ] 1 Internet Gateway
+[ ] 1 NAT Gateway
+[ ] 4 Security Groups configurados
+[ ] Rutas públicas hacia IGW
+[ ] Rutas privadas hacia NAT
+
+BASE DE DATOS:
+[ ] RDS MySQL marketaws-mysql creada
+[ ] Tabla productos creada
+[ ] Tabla ordenes creada
+[ ] Tabla errores creada
+
+ALMACENAMIENTO:
+[ ] S3 bucket marketaws-product-images-... creado
+[ ] Carpetas uploads/ y rejected/ creadas
+
+COLAS Y TEMAS:
+[ ] SQS marketaws-order-queue con DLQ
+[ ] SQS marketaws-order-dlq creada
+[ ] SQS marketaws-payment-queue creada
+[ ] SQS marketaws-seller-notifications-queue creada
+[ ] SNS marketaws-marketplace-events con 3 suscriptores
+[ ] SNS marketaws-admin-alerts con email confirmado
+
+LAMBDAS:
+[ ] marketaws-image-validator-lambda con trigger S3
+[ ] marketaws-create-order-lambda con variables de entorno
+[ ] marketaws-process-order-lambda con trigger SQS
+[ ] marketaws-inventory-lambda con suscripción SNS
+[ ] marketaws-dlq-handler-lambda con variables de entorno
+
+API:
+[ ] API Gateway marketaws-orders-api creada
+[ ] Método POST /orders funcional
+[ ] URL de invocación anotada
+
+INFRAESTRUCTURA EC2:
+[ ] EC2 marketaws-nginx-proxy running
+[ ] NGINX configurado con upstream ponderado (70/30)
+[ ] ALB marketaws-marketplace-alb creado
+[ ] Target Group marketaws-nginx-tg con instancia Healthy
+
+AUTOMATIZACIÓN:
+[ ] EventBridge rule marketaws-dlq-every-5-min activa
+[ ] Rule con trigger cada 5 minutos
+
+PRUEBAS EXITOSAS:
+[ ] Orden exitosa crea registro en RDS
+[ ] Orden exitosa envía a SQS y SNS
+[ ] Orden con forceError: true va a DLQ
+[ ] DLQ inserta error en RDS
+[ ] Admin recibe email de DLQ
+[ ] SNS fan-out entrega a colas correctas
+[ ] S3 rechaza archivos inválidos
+[ ] ALB balancea 70/30
+
+================================================================================
+CONCLUSIÓN
+================================================================================
+
+Has construido un marketplace serverless con:
+- Infraestructura de red aislada
+- Base de datos MySQL privada
+- Procesamiento de imágenes con Rekognition
+- Colas con manejo de errores y DLQ
+- Fan-out automático de eventos
+- API REST con Lambda
+- Load balancing con canary deployment
+- Automatización con EventBridge
+
+El sistema es escalable, tolerante a fallos y listo para producción.
+
+================================================================================

@@ -1,0 +1,27 @@
+const mysql = require('mysql2/promise');
+exports.handler = async () => {
+    const connection = await mysql.createConnection({
+        host: 'marketaws-mysql.cmxosukg8wda.us-east-1.rds.amazonaws.com',
+        user: 'marketawsadmin',
+        password: '12345678',
+        database: 'marketawsdb'
+    });
+    
+    // Decodificar SQL desde Base64 para evitar errores de sintaxis
+    const sqlBase64 = 'Q1JFQVRFIFRBQkxFIElGIE5PVCBFWElTVFMgcHJvZHVjdG9zICgNCiAgaWQgQklHSU5UIEFVVE9fSU5DUkVNRU5UIFBSSU1BUlkgS0VZLA0KICBzZWxsZXJfaWQgVkFSQ0hBUig1MCkgTk9UIE5VTEwsDQogIG5vbWJyZSBWQVJDSEFSKDIwMCkgTk9UIE5VTEwsDQogIGRlc2NyaXBjaW9uIFRFWFQsDQogIHByZWNpbyBERUNJTUFMKDEwLDIpIE5PVCBOVUxMLA0KICBzdG9jayBJTlQgTk9UIE5VTEwgREVGQVVMVCAwLA0KICBpbWFnZW5fdXJsIFRFWFQsDQogIGVzdGFkbyBWQVJDSEFSKDMwKSBOT1QgTlVMTCBERUZBVUxUICdhY3Rpdm8nLA0KICBjcmVhdGVkX2F0IFRJTUVTVEFNUCBOT1QgTlVMTCBERUZBVUxUIENVUlJFTlRfVElNRVNUQU1QDQopOw0KDQpDUkVBVEUgVEFCTEUgSUYgTk9UIEVYSVNUUyBvcmRlbmVzICgNCiAgaWQgQklHSU5UIEFVVE9fSU5DUkVNRU5UIFBSSU1BUlkgS0VZLA0KICBvcmRlcl9pZCBDSEFSKDM2KSBOT1QgTlVMTCBERUZBVUxUIChVVUlEKCkpLA0KICBidXllcl9pZCBWQVJDSEFSKDUwKSwNCiAgc2VsbGVyX2lkIFZBUkNIQVIoNTApIE5PVCBOVUxMLA0KICBwcm9kdWN0b19pZCBCSUdJTlQsDQogIGNhbnRpZGFkIElOVCBOT1QgTlVMTCwNCiAgdG90YWwgREVDSU1BTCgxMCwyKSBOT1QgTlVMTCwNCiAgZXN0YWRvIFZBUkNIQVIoMzApIE5PVCBOVUxMIERFRkFVTFQgJ2NyZWFkYScsDQogIHBheW1lbnRfc3RhdHVzIFZBUkNIQVIoMzApIE5PVCBOVUxMIERFRkFVTFQgJ3BlbmRpZW50ZScsDQogIGNyZWF0ZWRfYXQgVElNRVNUQU1QIE5PVCBOVUxMIERFRkFVTFQgQ1VSUkVOVF9USU1FU1RBTVAsDQogIHVwZGF0ZWRfYXQgVElNRVNUQU1QIE5PVCBOVUxMIERFRkFVTFQgQ1VSUkVOVF9USU1FU1RBTVAgT04gVVBEQVRFIENVUlJFTlRfVElNRVNUQU1QLA0KICBDT05TVFJBSU5UIGZrX29yZGVuX3Byb2R1Y3RvIEZPUkVJR04gS0VZIChwcm9kdWN0b19pZCkgUkVGRVJFTkNFUyBwcm9kdWN0b3MoaWQpDQopOw0KDQpDUkVBVEUgVEFCTEUgSUYgTk9UIEVYSVNUUyBlcnJvcmVzICgNCiAgaWQgQklHSU5UIEFVVE9fSU5DUkVNRU5UIFBSSU1BUlkgS0VZLA0KICBzb3VyY2VfcXVldWUgVkFSQ0hBUigyMDApLA0KICBsYW1iZGFfbmFtZSBWQVJDSEFSKDIwMCksDQogIGVycm9yX3R5cGUgVkFSQ0hBUigxMDApLA0KICBtZXNzYWdlIFRFWFQgTk9UIE5VTEwsDQogIHJhd19wYXlsb2FkIEpTT04sDQogIGNyZWF0ZWRfYXQgVElNRVNUQU1QIE5PVCBOVUxMIERFRkFVTFQgQ1VSUkVOVF9USU1FU1RBTVANCik7DQo=';
+    const sql = Buffer.from(sqlBase64, 'base64').toString('utf-8');
+    const statements = sql.split(';').filter(s => s.trim());
+    
+    for (const statement of statements) {
+        console.log('Ejecutando statement...');
+        try {
+            await connection.execute(statement);
+        } catch (err) {
+            console.error('Fallo statement:', statement);
+            throw err;
+        }
+    }
+    
+    await connection.end();
+    return { status: 'success', message: 'Tablas creadas' };
+};

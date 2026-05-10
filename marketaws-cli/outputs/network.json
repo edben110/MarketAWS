@@ -1,0 +1,22 @@
+{
+  "natGatewayId": "nat-0c2a899852555852e",
+  "internetGatewayId": "igw-04a288a05ba68cdb2",
+  "subnets": {
+    "publicA": "subnet-0f5c35e64c5e4573f",
+    "publicB": "subnet-094e294d5e6888112",
+    "privateA": "subnet-0dcf3fad72dbb8dfe",
+    "privateB": "subnet-090931ff4d61ff646"
+  },
+  "securityGroups": {
+    "alb": "sg-011c200d1e7ca74ab",
+    "ec2": "sg-051c1eb01e9ee0798",
+    "lambda": "sg-01f530e4dbf40aae1",
+    "rds": "sg-047c4ad018490284c"
+  },
+  "vpcId": "vpc-00a84ba695d602acc",
+  "routeTables": {
+    "public": "rtb-07f3c8e67ca4e569c",
+    "private": "rtb-0b8d5a08a114da266"
+  },
+  "region": "us-east-1"
+}

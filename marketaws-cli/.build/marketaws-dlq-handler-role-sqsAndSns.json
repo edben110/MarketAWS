@@ -1,0 +1,19 @@
+{
+  "Statement": [
+    {
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:469134084749:marketaws-order-dlq",
+      "Effect": "Allow"
+    },
+    {
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:us-east-1:469134084749:marketaws-admin-alerts",
+      "Effect": "Allow"
+    }
+  ],
+  "Version": "2012-10-17"
+}

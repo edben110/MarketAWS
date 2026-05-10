@@ -1,0 +1,8 @@
+marketAWS-admin^0oX5[8]
+clave rds:12345678
+urls qeues:
+https://sqs.us-east-1.amazonaws.com/469134084749/marketaws-order-queue
+https://sqs.us-east-1.amazonaws.com/469134084749/arketaws-order-dlq
+
+falta endpoint en la primer lambda creada
+falta subscripcion 3 inventory lambda

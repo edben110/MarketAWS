@@ -1,0 +1,25 @@
+{
+  "rds": {
+    "instanceId": "marketaws-mysql",
+    "endpoint": "marketaws-mysql.cmxosukg8wda.us-east-1.rds.amazonaws.com",
+    "subnetGroup": "marketaws-db-subnets",
+    "databaseName": "marketawsdb"
+  },
+  "s3": {
+    "bucket": "marketaws-product-images-469134084749-us-east-1"
+  },
+  "sns": {
+    "marketplaceTopicArn": "arn:aws:sns:us-east-1:469134084749:marketaws-marketplace-events",
+    "adminTopicArn": "arn:aws:sns:us-east-1:469134084749:marketaws-admin-alerts"
+  },
+  "sqs": {
+    "orderDlqUrl": "https://sqs.us-east-1.amazonaws.com/469134084749/marketaws-order-dlq",
+    "orderQueueUrl": "https://sqs.us-east-1.amazonaws.com/469134084749/marketaws-order-queue",
+    "paymentQueueUrl": "https://sqs.us-east-1.amazonaws.com/469134084749/marketaws-payment-queue",
+    "sellerQueueUrl": "https://sqs.us-east-1.amazonaws.com/469134084749/marketaws-seller-notifications-queue",
+    "orderDlqArn": "arn:aws:sqs:us-east-1:469134084749:marketaws-order-dlq",
+    "orderQueueArn": "arn:aws:sqs:us-east-1:469134084749:marketaws-order-queue",
+    "paymentQueueArn": "arn:aws:sqs:us-east-1:469134084749:marketaws-payment-queue",
+    "sellerQueueArn": "arn:aws:sqs:us-east-1:469134084749:marketaws-seller-notifications-queue"
+  }
+}

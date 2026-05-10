@@ -1,0 +1,10 @@
+{
+  "Statement": [
+    {
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:us-east-1:469134084749:marketaws-order-queue",
+      "Effect": "Allow"
+    }
+  ],
+  "Version": "2012-10-17"
+}
