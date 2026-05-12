@@ -130,6 +130,7 @@ $inventoryArn = Deploy-NodeLambda -FunctionName 'marketaws-inventory-lambda' -So
 $dlqArn = Deploy-NodeLambda -FunctionName 'marketaws-dlq-handler-lambda' -SourceFile "$PSScriptRoot/lambdas/dlq-handler/index.js" -RoleArn $execRoleArn -Env @{ DLQ_URL=$data.sqs.orderDlqUrl; DB_HOST=$data.rds.endpoint; DB_NAME=$data.rds.databaseName; DB_USER=$config.RDS_MASTER_USERNAME; DB_PASSWORD=$config.RDS_MASTER_PASSWORD; ADMIN_TOPIC_ARN=$data.sns.adminTopicArn } -Layers @($mysqlLayerArn) -Subnets $subnets -Sg $sg
 $imageArn = Deploy-NodeLambda -FunctionName 'marketaws-image-validator-lambda' -SourceFile "$PSScriptRoot/lambdas/image-validator/index.js" -RoleArn $execRoleArn -Env @{ BUCKET_NAME=$data.s3.bucket; SNS_TOPIC_ARN=$data.sns.adminTopicArn } -SkipVpc
 $uploadUrlArn = Deploy-NodeLambda -FunctionName 'marketaws-get-upload-url-lambda' -SourceFile "$PSScriptRoot/lambdas/get-upload-url/index.js" -RoleArn $execRoleArn -Env @{ BUCKET_NAME=$data.s3.bucket } -Layers @($mysqlLayerArn) -SkipVpc
+$getProductsArn = Deploy-NodeLambda -FunctionName 'marketaws-get-products-lambda' -SourceFile "$PSScriptRoot/lambdas/get-products/index.js" -RoleArn $execRoleArn -Env @{ DB_HOST=$data.rds.endpoint; DB_NAME=$data.rds.databaseName; DB_USER=$config.RDS_MASTER_USERNAME; DB_PASSWORD=$config.RDS_MASTER_PASSWORD } -Layers @($mysqlLayerArn) -Subnets $subnets -Sg $sg
 
 # Triggers
 try { Invoke-MarketAwsCli -CommandArgs @('lambda', 'create-event-source-mapping', '--function-name', 'marketaws-process-order-lambda', '--event-source-arn', $data.sqs.orderQueueArn) | Out-Null } catch { }
@@ -138,6 +139,6 @@ $s3Config = @{ LambdaFunctionConfigurations = @(@{ LambdaFunctionArn=$imageArn; 
 Invoke-MarketAwsCli -CommandArgs @('s3api', 'put-bucket-notification-configuration', '--bucket', $data.s3.bucket, '--notification-configuration', $s3Config) | Out-Null
 
 # Estado Final
-$state = [ordered]@{ createOrderArn=$createOrderArn; processOrderArn=$processOrderArn; inventoryArn=$inventoryArn; dlqArn=$dlqArn; imageArn=$imageArn; uploadUrlArn=$uploadUrlArn; mysqlLayerArn=$mysqlLayerArn }
+$state = [ordered]@{ createOrderArn=$createOrderArn; processOrderArn=$processOrderArn; inventoryArn=$inventoryArn; dlqArn=$dlqArn; imageArn=$imageArn; uploadUrlArn=$uploadUrlArn; getProductsArn=$getProductsArn; mysqlLayerArn=$mysqlLayerArn }
 Save-JsonFile -Data $state -Path $OutputPath
 Write-Host "Lambdas listas y guardadas en $OutputPath"

@@ -1,0 +1,20 @@
+{
+    "FunctionName": "marketaws-get-products-lambda",
+    "Runtime": "nodejs18.x",
+    "Role": "arn:aws:iam::469134084749:role/marketaws-lambda-exec-role",
+    "Handler": "index.handler",
+    "Timeout": 30,
+    "VpcConfig": {
+        "SubnetIds": ["subnet-0dcf3fad72dbb8dfe", "subnet-090931ff4d61ff646"],
+        "SecurityGroupIds": ["sg-01f530e4dbf40aae1"]
+    },
+    "Environment": {
+        "Variables": {
+            "DB_HOST": "marketaws-mysql.cmxosukg8wda.us-east-1.rds.amazonaws.com",
+            "DB_NAME": "marketawsdb",
+            "DB_USER": "marketawsadmin",
+            "DB_PASSWORD": "12345678"
+        }
+    },
+    "Layers": ["arn:aws:lambda:us-east-1:469134084749:layer:marketaws-mysql2-layer:32"]
+}

@@ -1,0 +1,7 @@
+{
+    "InstanceIds": ["i-0bb3bb4d3fb9afc37"],
+    "DocumentName": "AWS-RunShellScript",
+    "Parameters": {
+        "commands": ["ls /"]
+    }
+}

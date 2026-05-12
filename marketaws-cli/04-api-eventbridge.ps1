@@ -178,6 +178,7 @@ $restApiId = Ensure-RestApi -Name 'marketaws-orders-api'
 $rootResourceId = Invoke-MarketAwsCli -CommandArgs @('apigateway', 'get-resources', '--rest-api-id', $restApiId, '--query', 'items[?path==`/`].id | [0]', '--output', 'text')
 $ordersResourceId = Ensure-ApiResource -RestApiId $restApiId -ParentId $rootResourceId -PathPart 'orders'
 $imagesResourceId = Ensure-ApiResource -RestApiId $restApiId -ParentId $rootResourceId -PathPart 'images'
+$productsResourceId = Ensure-ApiResource -RestApiId $restApiId -ParentId $rootResourceId -PathPart 'products'
 
 # Configurar /orders (POST)
 Ensure-MethodAndIntegration -RestApiId $restApiId -ResourceId $ordersResourceId -LambdaArn $lambdas.createOrderArn -Region $region
@@ -194,6 +195,19 @@ try {
 } catch { }
 Enable-Cors -RestApiId $restApiId -ResourceId $imagesResourceId
 
+# Configurar /products (GET y POST)
+Ensure-MethodAndIntegration -RestApiId $restApiId -ResourceId $productsResourceId -LambdaArn $lambdas.getProductsArn -Region $region
+
+try {
+    Invoke-MarketAwsCli -CommandArgs @('apigateway', 'put-method', '--rest-api-id', $restApiId, '--resource-id', $productsResourceId, '--http-method', 'GET', '--authorization-type', 'NONE') | Out-Null
+} catch { }
+
+$getProductsUri = "arn:aws:apigateway:$($region):lambda:path/2015-03-31/functions/$($lambdas.getProductsArn)/invocations"
+try {
+    Invoke-MarketAwsCli -CommandArgs @('apigateway', 'put-integration', '--rest-api-id', $restApiId, '--resource-id', $productsResourceId, '--http-method', 'GET', '--type', 'AWS_PROXY', '--integration-http-method', 'POST', '--uri', $getProductsUri) | Out-Null
+} catch { }
+Enable-Cors -RestApiId $restApiId -ResourceId $productsResourceId
+
 # Permisos Lambda para API Gateway
 $apiInvokeArn = "arn:aws:execute-api:${region}:$($identity.Account):$restApiId/*"
 try {
@@ -201,6 +215,12 @@ try {
 } catch { }
 try {
     Invoke-MarketAwsCli -CommandArgs @('lambda', 'add-permission', '--function-name', 'marketaws-get-upload-url-lambda', '--statement-id', 'marketaws-apigw-invoke-images', '--action', 'lambda:InvokeFunction', '--principal', 'apigateway.amazonaws.com', '--source-arn', "$apiInvokeArn/GET/images") | Out-Null
+} catch { }
+try {
+    Invoke-MarketAwsCli -CommandArgs @('lambda', 'add-permission', '--function-name', 'marketaws-get-products-lambda', '--statement-id', 'marketaws-apigw-invoke-products-get', '--action', 'lambda:InvokeFunction', '--principal', 'apigateway.amazonaws.com', '--source-arn', "$apiInvokeArn/GET/products") | Out-Null
+} catch { }
+try {
+    Invoke-MarketAwsCli -CommandArgs @('lambda', 'add-permission', '--function-name', 'marketaws-get-products-lambda', '--statement-id', 'marketaws-apigw-invoke-products-post', '--action', 'lambda:InvokeFunction', '--principal', 'apigateway.amazonaws.com', '--source-arn', "$apiInvokeArn/POST/products") | Out-Null
 } catch { }
 Ensure-ApiDeployment -RestApiId $restApiId -StageName 'prod'
 
@@ -214,6 +234,7 @@ $endpoints = [ordered]@{
     accountId = $identity.Account
     api = [ordered]@{
         ordersUrl = $apiUrl
+        productsUrl = "https://$restApiId.execute-api.$region.amazonaws.com/prod/products"
         restApiId = $restApiId
     }
     s3 = [ordered]@{

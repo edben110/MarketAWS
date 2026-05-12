@@ -19,6 +19,7 @@ if (-not $endpoints.ec2 -or -not $endpoints.ec2.instanceIds) {
 
 $instanceIds = $endpoints.ec2.instanceIds
 $apiUrl = $endpoints.api.ordersUrl
+$productsUrl = $endpoints.api.productsUrl
 
 Write-MarketAwsStep 'Desplegando Frontend a Instancias EC2'
 
@@ -33,7 +34,7 @@ foreach ($instanceId in $instanceIds) {
     Write-Host "   -> Configurando Servidor $serverIndex ($instanceId)..."
     
     # Inyectar variables en el JS de configuración
-    $configContent = "window.APP_CONFIG = { API_URL: '$apiUrl', SERVER_NAME: 'Servidor $serverIndex' };"
+    $configContent = "window.APP_CONFIG = { API_URL: '$apiUrl', PRODUCTS_URL: '$productsUrl', SERVER_NAME: 'Servidor $serverIndex' };"
     $configBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($configContent))
 
     # Script bash para la instancia
@@ -118,6 +119,6 @@ systemctl restart nginx
 
 Write-Host "=========================================================="
 Write-Host "¡Despliegue de Frontend Completo!" -ForegroundColor Green
-Write-Host "Abre tu navegador en: http://$($endpoints.ec2.albDnsName)" -ForegroundColor Cyan
+Write-Host "Abre tu navegador en: http://$($endpoints.ec2.loadBalancerDns)" -ForegroundColor Cyan
 Write-Host "Presiona F12 para ver en consola el Servidor y la API conectada."
 Write-Host "=========================================================="

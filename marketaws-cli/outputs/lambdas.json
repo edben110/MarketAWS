@@ -1,9 +1,10 @@
 {
-  "imageArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-image-validator-lambda",
-  "createOrderArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-create-order-lambda",
   "inventoryArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-inventory-lambda",
+  "mysqlLayerArn": "arn:aws:lambda:us-east-1:469134084749:layer:marketaws-mysql2-layer:35",
   "processOrderArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-process-order-lambda",
-  "mysqlLayerArn": "arn:aws:lambda:us-east-1:469134084749:layer:marketaws-mysql2-layer:31",
+  "getProductsArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-get-products-lambda",
+  "createOrderArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-create-order-lambda",
   "dlqArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-dlq-handler-lambda",
+  "imageArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-image-validator-lambda",
   "uploadUrlArn": "arn:aws:lambda:us-east-1:469134084749:function:marketaws-get-upload-url-lambda"
 }

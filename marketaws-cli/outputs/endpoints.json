@@ -1,6 +1,7 @@
 {
   "api": {
     "ordersUrl": "https://9zfyxw0098.execute-api.us-east-1.amazonaws.com/prod/orders",
+    "productsUrl": "https://9zfyxw0098.execute-api.us-east-1.amazonaws.com/prod/products",
     "restApiId": "9zfyxw0098"
   },
   "ec2": {

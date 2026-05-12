@@ -1,0 +1,13 @@
+{
+  "commands": [
+    "#!/bin/bash",
+    "mkdir -p /usr/share/nginx/html",
+    "cd /usr/share/nginx/html",
+    "echo '' | base64 -d > index.html",
+    "echo '' | base64 -d > style.css",
+    "echo '' | base64 -d > app.js",
+    "echo 'd2luZG93LkFQUF9DT05GSUcgPSB7IEFQSV9VUkw6ICdodHRwczovLzl6Znl4dzAwOTguZXhlY3V0ZS1hcGkudXMtZWFzdC0xLmFtYXpvbmF3cy5jb20vcHJvZC9vcmRlcnMnLCBQUk9EVUNUU19VUkw6ICdodHRwczovLzl6Znl4dzAwOTguZXhlY3V0ZS1hcGkudXMtZWFzdC0xLmFtYXpvbmF3cy5jb20vcHJvZC9wcm9kdWN0cycsIFNFUlZFUl9OQU1FOiAnU2Vydmlkb3IgMScgfTs=' | base64 -d > config.js",
+    "chmod 644 index.html style.css app.js config.js",
+    "systemctl restart nginx"
+  ]
+}
